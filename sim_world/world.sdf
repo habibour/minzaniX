@@ -1,0 +1,142 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="minzanix_world">
+    <!-- Physics -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    
+    <!-- Plugins -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure">
+    </plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    
+    <!-- Lighting -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.3 0.5 0.3 1</ambient>
+            <diffuse>0.4 0.6 0.4 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <!-- PX4 x500 quadcopter with GPS, Barometer, Magnetometer, IMU -->
+    <include>
+      <uri>model://x500</uri>
+      <name>x500</name>
+      <pose>0 0 0.5 0 0 0</pose>
+    </include>
+    
+    <!-- Invisible boundary walls to keep drone inside simulation area (20x20x20m) -->
+    <model name="boundary_box">
+      <static>true</static>
+      <pose>0 0 10 0 0 0</pose>
+      
+      <!-- North wall -->
+      <link name="wall_north">
+        <pose>0 10 0 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>20 0.1 20</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      
+      <!-- South wall -->
+      <link name="wall_south">
+        <pose>0 -10 0 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>20 0.1 20</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      
+      <!-- East wall -->
+      <link name="wall_east">
+        <pose>10 0 0 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.1 20 20</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      
+      <!-- West wall -->
+      <link name="wall_west">
+        <pose>-10 0 0 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.1 20 20</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      
+      <!-- Ceiling -->
+      <link name="ceiling">
+        <pose>0 0 10 0 0 0</pose>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>20 20 0.1</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+    
+  </world>
+</sdf>
