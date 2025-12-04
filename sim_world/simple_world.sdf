@@ -1,0 +1,132 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="minzanix_world">
+    <!-- Physics -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    
+    <!-- Plugins -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"></plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"></plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"></plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"></plugin>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure"></plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    
+    <!-- Lighting -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.3 0.5 0.3 1</ambient>
+            <diffuse>0.4 0.6 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <!-- Simple X500 Quadcopter -->
+    <model name="x500">
+      <pose>0 0 0.5 0 0 0</pose>
+      
+      <!-- Base link (body) -->
+      <link name="base_link">
+        <inertial>
+          <mass>1.5</mass>
+          <inertia>
+            <ixx>0.029125</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>0.029125</iyy>
+            <iyz>0</iyz>
+            <izz>0.055225</izz>
+          </inertia>
+        </inertial>
+        
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.47 0.47 0.11</size>
+            </box>
+          </geometry>
+        </collision>
+        
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.47 0.47 0.11</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+        
+        <!-- IMU Sensor -->
+        <sensor name="imu_sensor" type="imu">
+          <always_on>1</always_on>
+          <update_rate>250</update_rate>
+          <topic>/world/minzanix_world/model/x500/link/base_link/sensor/imu_sensor/imu</topic>
+          <imu>
+            <angular_velocity>
+              <x><noise type="gaussian"><stddev>0.0003</stddev></noise></x>
+              <y><noise type="gaussian"><stddev>0.0003</stddev></noise></y>
+              <z><noise type="gaussian"><stddev>0.0003</stddev></noise></z>
+            </angular_velocity>
+            <linear_acceleration>
+              <x><noise type="gaussian"><stddev>0.017</stddev></noise></x>
+              <y><noise type="gaussian"><stddev>0.017</stddev></noise></y>
+              <z><noise type="gaussian"><stddev>0.017</stddev></noise></z>
+            </linear_acceleration>
+          </imu>
+        </sensor>
+        
+        <!-- Barometer/Altimeter -->
+        <sensor name="air_pressure_sensor" type="air_pressure">
+          <always_on>1</always_on>
+          <update_rate>50</update_rate>
+          <topic>/world/minzanix_world/model/x500/link/base_link/sensor/air_pressure_sensor/air_pressure</topic>
+          <air_pressure>
+            <pressure>
+              <noise type="gaussian"><stddev>0.01</stddev></noise>
+            </pressure>
+          </air_pressure>
+        </sensor>
+      </link>
+      
+      <!-- Motor thrust plugin -->
+      <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
+        <joint_name>rotor_0_joint</joint_name>
+      </plugin>
+    </model>
+  </world>
+</sdf>

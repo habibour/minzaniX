@@ -1,18 +1,18 @@
 # minzaniX 1.0
 
-**A Lightweight, MCU-Independent PX4-Style Flight Controller**
+**A Lightweight, Autonomous Flight Controller for Simulation**
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ## Overview
 
-minzaniX 1.0 is a modular, portable flight controller architecture inspired by PX4 and ArduPilot. It features:
+minzaniX 1.0 is a clean, minimal flight controller focused on autonomous flight in Gazebo simulation. It features:
 
-- **MCU-Independent Core**: Flight stack works on any platform
-- **Clean Abstraction Layer**: Platform-specific code isolated from control logic
-- **Multiple Backends**: Simulation (Gazebo) and STM32 hardware support
-- **Lightweight**: Suitable for resource-constrained microcontrollers
+- **Core Flight Control**: Attitude estimation, altitude control, PID tuning
+- **Autonomous Modes**: Takeoff, hover, and landing sequences
+- **Gazebo Integration**: Full sensor simulation (IMU, barometer)
+- **Simplified**: All MAVLink and external communication removed
 - **Educational**: Clear, documented code for learning flight control
 
 ## Architecture
@@ -46,52 +46,68 @@ minzaniX 1.0/
 
 ### Prerequisites
 
-**For Simulation:**
 ```bash
-# Ubuntu/Debian
-sudo apt install build-essential cmake
-
 # macOS
-brew install cmake
+brew install cmake gz-harmonic
+
+# Linux
+sudo apt install build-essential cmake gz-harmonic
 ```
 
-**For Hardware (STM32):**
-- STM32CubeIDE
-- STM32F103 Blue Pill board
-- IMU (MPU6050 or similar)
-- 4x brushless motors + ESCs
-
-### Build Simulation
+### Build
 
 ```bash
-mkdir build && cd build
-cmake ..
-make
+./build.sh
 ```
 
-### Run Simulation
+### Run Autonomous 10m Takeoff Test
 
+**Automatic (Single Terminal):**
 ```bash
-./minzanix_sim
+./run_test.sh
 ```
 
-Expected output:
+**Manual (Two Terminals) - Recommended for macOS:**
+
+Terminal 1 - Start Gazebo:
+```bash
+export GZ_SIM_RESOURCE_PATH=$PWD/sim_world:$GZ_SIM_RESOURCE_PATH
+gz sim sim_world/simple_world.sdf
+```
+Click the **PLAY** button ▶️ in Gazebo GUI.
+
+Terminal 2 - Start Flight Controller:
+```bash
+cd build
+./minzanix_sim --gazebo --auto-takeoff
+```
+
+### Expected Output
+
 ```
 === minzaniX 1.0 Flight Controller (Simulation) ===
-[SIM_IMU] Initialized
-[SIM_PWM] Initialized
+Mode: Gazebo Harmonic Integration
+Waiting for sensor data from Gazebo...
+IMU data received from Gazebo!
 Flight controller initialized
-System ARMED
+
+=== SENSOR CALIBRATION ===
+Calibrating... 1.0s
+Calibrating... 2.0s
+=== CALIBRATION COMPLETE ===
+
+=== OPEN-LOOP TAKEOFF TEST ===
+[AUTO] Arming...
+[AUTO] Armed!
 Starting main loop...
-Att: R=0.00 P=0.00 Y=1.72 | Motors: 0.50 0.50 0.50 0.50
+[OPEN-LOOP] Alt: 0.50m Vel:0.00m/s | Motors: 0.95 0.95 0.95 0.95
+[OPEN-LOOP] Alt: 2.34m Vel:1.45m/s | Motors: 0.95 0.95 0.95 0.95
+[OPEN-LOOP] Alt: 5.67m Vel:1.89m/s | Motors: 0.95 0.95 0.95 0.95
+[OPEN-LOOP] Alt: 9.12m Vel:1.52m/s | Motors: 0.95 0.95 0.95 0.95
+[OPEN-LOOP] Alt: 10.01m Vel:0.34m/s | Motors: 0.85 0.85 0.85 0.85
 ```
 
-### Build for STM32
-
-1. Open project in STM32CubeIDE
-2. Import `platform/bluepill/` files
-3. Configure peripherals (I2C, PWM, UART)
-4. Build and flash to Blue Pill
+The drone climbs to 10m and hovers!
 
 ## Configuration
 
@@ -112,42 +128,45 @@ static pid_params_t g_pid_params = {
 - **Simulation**: 250 Hz (4ms period)
 - **STM32**: 500 Hz (2ms period)
 
-## Hardware Setup
+## Troubleshooting
 
-### STM32 Blue Pill Connections
+### "No IMU data received from Gazebo"
+- Make sure Gazebo is running and **playing** (not paused)
+- On macOS, use GUI mode instead of server mode (`-s`)
+- Check topics are publishing: `gz topic -l | grep imu`
 
-| Peripheral | Pin | Function |
-|------------|-----|----------|
-| I2C1 SDA   | PB7 | IMU data |
-| I2C1 SCL   | PB6 | IMU clock |
-| TIM1 CH1   | PA8 | Motor 0 PWM |
-| TIM1 CH2   | PA9 | Motor 1 PWM |
-| TIM1 CH3   | PA10| Motor 2 PWM |
-| TIM1 CH4   | PA11| Motor 3 PWM |
-| USART1 TX  | PA9 | Telemetry |
-| USART1 RX  | PA10| Commands |
-
-## Gazebo Integration (Optional)
-
-To connect with Gazebo Harmonic:
-
-1. Install gz-transport: `sudo apt install gz-harmonic`
-2. Uncomment Gazebo code in `platform/sim/gazebo_bridge.cpp`
-3. Rebuild with Gazebo support
-
-Launch world:
+### Build Errors
 ```bash
-gz sim sim_world/world.sdf
+rm -rf build/*
+./build.sh
 ```
+
+## Cleaned Up Files
+
+The following unnecessary files were removed:
+- All MAVLink-related code and dependencies
+- Python test scripts (`autonomous_mission.py`, etc.)
+- Shell test scripts (`fly_10m.sh`, etc.)
+- External communication tools
+- Outdated documentation files
+
+## What the Test Does
+
+1. **Calibration (3s)**: Collects IMU and barometer baseline data
+2. **Arm**: Enables motors
+3. **Climb**: Applies 0.95 fixed thrust to reach 10m
+4. **Hover**: Reduces to 0.85 thrust to maintain 10m altitude
+
+This is an **open-loop control** test - no PID feedback, just fixed thrust based on altitude.
 
 ## Project Status
 
 - ✅ Core flight stack implemented
-- ✅ Simulation backend working
-- ✅ STM32 backend skeleton complete
-- 🔄 Gazebo integration (optional)
-- 🔄 Unit tests
-- 🔄 Advanced features (altitude hold, position control)
+- ✅ Gazebo Harmonic integration working
+- ✅ Autonomous takeoff and landing modes
+- ✅ Altitude estimation with barometer
+- ✅ PID controllers tuned for stable flight
+- ✅ Clean codebase (MAVLink removed)
 
 ## Documentation
 

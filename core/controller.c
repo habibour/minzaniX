@@ -6,11 +6,11 @@
 #include "controller.h"
 #include "mixer.h"
 
-// Default PID gains
+// Default PID gains (REDUCED for stable flight, YAW DISABLED)
 static pid_params_t g_params = {
-    .roll_kp = 1.5f, .roll_ki = 0.0f, .roll_kd = 0.3f,
-    .pitch_kp = 1.5f, .pitch_ki = 0.0f, .pitch_kd = 0.3f,
-    .yaw_kp = 2.0f, .yaw_ki = 0.0f, .yaw_kd = 0.5f
+    .roll_kp = 0.05f, .roll_ki = 0.0f, .roll_kd = 0.02f,
+    .pitch_kp = 0.05f, .pitch_ki = 0.0f, .pitch_kd = 0.02f,
+    .yaw_kp = 0.0f, .yaw_ki = 0.0f, .yaw_kd = 0.0f  // YAW DISABLED FOR TESTING
 };
 
 static attitude_setpoint_t g_sp = {0};
@@ -58,6 +58,15 @@ void controller_update(const attitude_t *att, float dt, motor_output_t *out) {
     float yaw_cmd = 
         g_params.yaw_kp * e_yaw - 
         g_params.yaw_kd * att->yaw_rate;
+    
+    // Limit control outputs to prevent saturation
+    #define MAX_CMD 0.08f
+    if (roll_cmd > MAX_CMD) roll_cmd = MAX_CMD;
+    if (roll_cmd < -MAX_CMD) roll_cmd = -MAX_CMD;
+    if (pitch_cmd > MAX_CMD) pitch_cmd = MAX_CMD;
+    if (pitch_cmd < -MAX_CMD) pitch_cmd = -MAX_CMD;
+    if (yaw_cmd > MAX_CMD) yaw_cmd = MAX_CMD;
+    if (yaw_cmd < -MAX_CMD) yaw_cmd = -MAX_CMD;
     
     // Mix commands into motor outputs
     mixer_mix(g_sp.thrust_sp, roll_cmd, pitch_cmd, yaw_cmd, out);

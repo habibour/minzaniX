@@ -11,23 +11,23 @@
 #include <math.h>
 
 // Limits
-#define MAX_VERTICAL_VELOCITY 1.0f   // m/s (allow faster climb now)
-#define MIN_VERTICAL_VELOCITY -1.0f  // m/s
-#define MAX_THRUST 0.90f             // Maximum thrust command
-#define MIN_THRUST 0.70f             // Minimum thrust command
-#define HOVER_THRUST 0.80f           // Nominal hover thrust (found experimentally)
+#define MAX_VERTICAL_VELOCITY 0.8f   // m/s - slow gentle approach
+#define MIN_VERTICAL_VELOCITY -0.8f  // m/s - slow gentle descent
+#define MAX_THRUST 0.85f             // Maximum thrust command (1.7x hover)
+#define MIN_THRUST 0.15f             // Minimum thrust command (0.3x hover)
+#define HOVER_THRUST 0.50f           // Nominal hover thrust
 
-// PID state - Position loop
-static float s_alt_kp = 0.5f;
-static float s_alt_ki = 0.1f;
-static float s_alt_kd = 0.2f;
+// PID state - Position loop (Gentle to avoid saturation)
+static float s_alt_kp = 0.02f;  // Very gentle P
+static float s_alt_ki = 0.001f; // Minimal I
+static float s_alt_kd = 0.01f;  // Light D
 static float s_alt_integrator = 0.0f;
 static float s_alt_prev_error = 0.0f;
 
-// PID state - Velocity loop
-static float s_vel_kp = 0.4f;
-static float s_vel_ki = 0.15f;
-static float s_vel_kd = 0.05f;
+// PID state - Velocity loop (Gentle)
+static float s_vel_kp = 0.04f;  // Gentle P
+static float s_vel_ki = 0.002f; // Minimal I
+static float s_vel_kd = 0.01f;  // Light damping
 static float s_vel_integrator = 0.0f;
 static float s_vel_prev_error = 0.0f;
 
@@ -35,8 +35,8 @@ static bool s_enabled = false;
 static bool s_initialized = false;
 
 // Integrator anti-windup limits
-#define MAX_ALT_INTEGRATOR 1.0f
-#define MAX_VEL_INTEGRATOR 0.5f
+#define MAX_ALT_INTEGRATOR 0.2f
+#define MAX_VEL_INTEGRATOR 0.1f
 
 /**
  * @brief Clamp value between min and max
@@ -64,10 +64,53 @@ float altitude_controller_update(
     const altitude_est_t *altitude_est,
     float dt
 ) {
+    // dt now used for integral term
+    
     if (!s_enabled || !s_initialized) {
         return HOVER_THRUST;
     }
 
+    // === SIMPLIFIED: Single-loop PID controller ===
+    // Direct altitude error to thrust (no velocity cascade)
+    float altitude_error = altitude_sp->altitude_sp - altitude_est->altitude;
+    
+    // Dead-band for P and D (but NOT I - integrator needs all error)
+    const float dead_band = 0.5f;  // ±0.5m no action zone
+    float error_for_pd = altitude_error;
+    if (altitude_error > -dead_band && altitude_error < dead_band) {
+        error_for_pd = 0.0f;
+    }
+    
+    // PID control: P for position, I for steady-state, D for damping
+    const float simple_kp = 0.020f;     // Position gain
+    const float simple_ki = 0.002f;     // Integral gain (eliminates steady-state error)
+    const float simple_kd = 0.080f;     // Velocity damping
+    
+    float p_term = simple_kp * error_for_pd;
+    
+    // Integral term (no dead-band - accumulates all error)
+    s_alt_integrator += altitude_error * dt;
+    s_alt_integrator = clamp(s_alt_integrator, -5.0f, 5.0f);  // Anti-windup
+    float i_term = simple_ki * s_alt_integrator;
+    
+    float d_term = -simple_kd * altitude_est->velocity;  // Opposes motion
+    
+    float thrust_adjustment = p_term + i_term + d_term;
+    
+    // Rate limiting: max 0.08 change per iteration
+    static float last_thrust = HOVER_THRUST;
+    float thrust_cmd = HOVER_THRUST + thrust_adjustment;
+    
+    const float max_thrust_delta = 0.08f;
+    if (thrust_cmd - last_thrust > max_thrust_delta) {
+        thrust_cmd = last_thrust + max_thrust_delta;
+    } else if (last_thrust - thrust_cmd > max_thrust_delta) {
+        thrust_cmd = last_thrust - max_thrust_delta;
+    }
+    last_thrust = thrust_cmd;
+    
+    // Original cascaded code commented out for now
+    /*
     // === Outer Loop: Altitude Position Control ===
     float altitude_error = altitude_sp->altitude_sp - altitude_est->altitude;
     
@@ -111,10 +154,11 @@ float altitude_controller_update(
     float vel_d_term = s_vel_kd * velocity_error_rate;
     
     // Output: Thrust adjustment
-    float thrust_adjustment = vel_p_term + vel_i_term + vel_d_term;
+    float thrust_adjustment_old = vel_p_term + vel_i_term + vel_d_term;
+    */
     
-    // Final thrust = hover + adjustment
-    float thrust_cmd = HOVER_THRUST + thrust_adjustment;
+    // Final thrust already computed above in simplified controller
+    // float thrust_cmd = HOVER_THRUST + thrust_adjustment;
     thrust_cmd = clamp(thrust_cmd, MIN_THRUST, MAX_THRUST);
     
     return thrust_cmd;

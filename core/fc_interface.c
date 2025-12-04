@@ -73,6 +73,8 @@ void fc_step(const imu_sample_t *imu, const baro_sample_t *baro, float dt, motor
     if (altitude_controller_is_enabled() && baro != NULL) {
         float altitude_thrust = altitude_controller_update(&s_altitude_sp, &s_altitude_est, dt);
         att_sp_working.thrust_sp = altitude_thrust;
+        // Update cached setpoint so next iteration doesn't revert to old thrust
+        s_cached_att_sp.thrust_sp = altitude_thrust;
     }
     
     controller_set_sp(&att_sp_working);

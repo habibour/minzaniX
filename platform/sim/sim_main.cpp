@@ -15,6 +15,7 @@ extern "C" {
     #include "core/pid_tuning.h"
     #include "core/estimator.h"
     #include "core/altitude_estimator.h"
+    #include "core/flight_modes.h"
     #include "platform_api/platform_imu.h"
     #include "platform_api/platform_pwm.h"
     #include "platform_api/platform_time.h"
@@ -22,64 +23,90 @@ extern "C" {
 }
 
 #include "gazebo_bridge.hpp"
+#include "udp_bridge.hpp"
 
-// Use Gazebo if USE_GAZEBO is defined
-#ifdef USE_GAZEBO
-static bool use_gazebo = true;
-#else
-static bool use_gazebo = false;
-#endif
+// Simulation mode
+enum SimMode {
+    SIM_FAKE,
+    SIM_GAZEBO,
+    SIM_UDP
+};
 
 int main(int argc, char** argv) {
-    // Check for --gazebo flag
+    // Check for flags
+    bool auto_takeoff = false;
+    SimMode sim_mode = SIM_FAKE;
+    
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--gazebo") == 0) {
-            use_gazebo = true;
+            sim_mode = SIM_GAZEBO;
+        }
+        if (strcmp(argv[i], "--udp") == 0) {
+            sim_mode = SIM_UDP;
+        }
+        if (strcmp(argv[i], "--auto-takeoff") == 0) {
+            auto_takeoff = true;
         }
     }
     
     std::cout << "=== minzaniX 1.0 Flight Controller (Simulation) ===" << std::endl;
     
-    if (use_gazebo) {
+    if (sim_mode == SIM_GAZEBO) {
         std::cout << "Mode: Gazebo Harmonic Integration" << std::endl;
+    } else if (sim_mode == SIM_UDP) {
+        std::cout << "Mode: UDP Simple Simulator" << std::endl;
     } else {
         std::cout << "Mode: Standalone (fake IMU data)" << std::endl;
     }
     
-    // Initialize Gazebo bridge if requested
-    if (use_gazebo) {
+    // Initialize bridge based on sim mode
+    if (sim_mode == SIM_GAZEBO) {
         if (!gazebo_bridge::init()) {
             std::cerr << "ERROR: Failed to initialize Gazebo bridge" << std::endl;
             return 1;
         }
         
-        // Subscribe to PX4 x500 sensors (world name: minzanix_world)
-        if (!gazebo_bridge::subscribe_imu("/world/minzanix_world/model/x500/link/base_link/sensor/imu_sensor/imu")) {
+        // Subscribe to PX4 x500 sensors
+        if (!gazebo_bridge::subscribe_imu("/imu")) {
             std::cerr << "ERROR: Failed to subscribe to IMU topic" << std::endl;
             return 1;
         }
         
-        if (!gazebo_bridge::subscribe_baro("/world/minzanix_world/model/x500/link/base_link/sensor/air_pressure_sensor/air_pressure")) {
+        if (!gazebo_bridge::subscribe_baro("/air_pressure")) {
             std::cerr << "ERROR: Failed to subscribe to barometer topic" << std::endl;
             return 1;
         }
         
         std::cout << "Waiting for sensor data from Gazebo..." << std::endl;
-        // Wait for first IMU message
+        // Wait for first IMU message (up to 30 seconds)
         imu_sample_t test_imu;
         int wait_count = 0;
-        while (!gazebo_bridge::get_imu(&test_imu) && wait_count < 50) {
+        while (!gazebo_bridge::get_imu(&test_imu) && wait_count < 300) {
+            if (wait_count % 10 == 0 && wait_count > 0) {
+                std::cout << "  Still waiting... (" << wait_count / 10 << "s)" << std::endl;
+            }
             platform_sleep_ms(100);
             wait_count++;
         }
         
-        if (wait_count >= 50) {
-            std::cerr << "ERROR: No IMU data received from Gazebo" << std::endl;
-            std::cerr << "Make sure Gazebo is running: gz sim sim_world/world.sdf" << std::endl;
+        if (wait_count >= 300) {
+            std::cerr << "ERROR: No IMU data received from Gazebo after 30 seconds" << std::endl;
+            std::cerr << "Make sure Gazebo is running and simulation is playing:" << std::endl;
+            std::cerr << "  1. gz sim -s sim_world/simple_world.sdf" << std::endl;
+            std::cerr << "  2. gz topic -t /world/minzanix_world/control -m gz.msgs.WorldControl -p 'pause: false'" << std::endl;
             return 1;
         }
         
         std::cout << "IMU data received from Gazebo!" << std::endl;
+    }
+    
+    // Initialize UDP bridge if requested
+    if (sim_mode == SIM_UDP) {
+        if (!udp_bridge::init()) {
+            std::cerr << "ERROR: Failed to initialize UDP bridge" << std::endl;
+            return 1;
+        }
+        std::cout << "UDP bridge ready - waiting for simulator..." << std::endl;
     }
     
     // Initialize platform
@@ -99,6 +126,10 @@ int main(int argc, char** argv) {
     fc_init();
     std::cout << "Flight controller initialized" << std::endl;
     
+    // Initialize flight mode system
+    flight_mode_init();
+    std::cout << "Flight mode system initialized" << std::endl;
+    
     // ========================================
     // CALIBRATION PHASE (First 3 seconds)
     // ========================================
@@ -108,19 +139,24 @@ int main(int argc, char** argv) {
     
     const uint32_t CALIBRATION_DURATION_MS = 3000;
     estimator_start_calibration(CALIBRATION_DURATION_MS);
-    if (use_gazebo) {
+    if (sim_mode != SIM_FAKE) {
         altitude_estimator_start_calibration(CALIBRATION_DURATION_MS);
     }
     
     uint32_t calib_start = platform_millis();
     bool imu_calibrated = false;
-    bool baro_calibrated = !use_gazebo;  // Skip baro if not using gazebo
+    bool baro_calibrated = (sim_mode == SIM_FAKE);  // Skip baro for fake mode
     
     while (!imu_calibrated || !baro_calibrated) {
         // Read sensors
         imu_sample_t imu;
-        if (use_gazebo) {
+        if (sim_mode == SIM_GAZEBO) {
             if (!gazebo_bridge::get_imu(&imu)) {
+                platform_sleep_ms(4);
+                continue;
+            }
+        } else if (sim_mode == SIM_UDP) {
+            if (!udp_bridge::get_imu(&imu)) {
                 platform_sleep_ms(4);
                 continue;
             }
@@ -137,9 +173,15 @@ int main(int argc, char** argv) {
         }
         
         // Calibrate barometer
-        if (use_gazebo && !baro_calibrated) {
+        if (!baro_calibrated) {
             baro_sample_t baro;
-            if (gazebo_bridge::get_baro(&baro)) {
+            bool got_baro = false;
+            if (sim_mode == SIM_GAZEBO) {
+                got_baro = gazebo_bridge::get_baro(&baro);
+            } else if (sim_mode == SIM_UDP) {
+                got_baro = udp_bridge::get_baro(&baro);
+            }
+            if (got_baro) {
                 baro_calibrated = altitude_estimator_calibrate_sample(&baro);
             }
         }
@@ -188,21 +230,30 @@ int main(int argc, char** argv) {
     sp.thrust_sp = 0.80f;  // 80% throttle - x500 is heavy
     fc_set_attitude_setpoint(&sp);
     
-    // Enable altitude hold
-    if (use_gazebo) {
+    // Check if auto-takeoff mode
+    if (auto_takeoff) {
+        std::cout << "\n=== ALTITUDE HOLD TEST ===" << std::endl;
+        std::cout << "Target: Climb to 10m and hover" << std::endl;
+        std::cout << "Using PID altitude controller" << std::endl;
+        
+        // Set altitude target
         altitude_setpoint_t alt_sp{};
-        alt_sp.altitude_sp = 2.0f;  // Target altitude: 2.0 meters (reduced from 12m)
-        alt_sp.velocity_sp = 0.0f;  // Hover
+        alt_sp.altitude_sp = 10.0f;  // 10 meter target
+        alt_sp.velocity_sp = 0.0f;
         fc_set_altitude_setpoint(&alt_sp);
         fc_set_altitude_hold_enabled(true);
-        std::cout << "Altitude hold ENABLED - Target: 2.0m" << std::endl;
+        
+        // ARM
+        std::cout << "[AUTO] Arming..." << std::endl;
+        fc_set_armed(true);
+        std::cout << "[AUTO] Armed!" << std::endl;
+        std::cout << "[AUTO] Altitude hold enabled - target 10.0m" << std::endl;
+        
+        platform_sleep_ms(500);
     } else {
-        std::cout << "Using manual thrust - testing lift capability" << std::endl;
+        // Manual mode - system ready for flight
+        std::cout << "System ready. Use --auto-takeoff flag for automatic takeoff test" << std::endl;
     }
-    
-    // Arm the system
-    fc_set_armed(true);
-    std::cout << "System ARMED" << std::endl;
     
     // Main loop
     uint32_t last_time = platform_millis();
@@ -214,14 +265,15 @@ int main(int argc, char** argv) {
     std::cout << "Auto-reset enabled: Drone will reset to initial position every 20 seconds" << std::endl;
     
     while (true) {
+        
         // Check if 20 seconds elapsed - reset drone position
         uint32_t elapsed = platform_millis() - start_time;
         if (elapsed >= RESET_INTERVAL) {
             std::cout << "\n=== 20 SECOND RESET ===" << std::endl;
             std::cout << "Resetting drone to initial position (0, 0, 0.5)" << std::endl;
             
-            // Reset via Gazebo service
-            if (use_gazebo) {
+            // Reset via Gazebo service (UDP sim resets internally)
+            if (sim_mode == SIM_GAZEBO) {
                 gazebo_bridge::reset_drone_pose(0, 0, 0.5, 0, 0, 0);
             }
             
@@ -229,11 +281,16 @@ int main(int argc, char** argv) {
             std::cout << "Reset complete. Resuming flight...\n" << std::endl;
         }
         
-        // Read IMU (from Gazebo or fake data)
+        // Read IMU (from Gazebo, UDP, or fake data)
         imu_sample_t imu;
-        if (use_gazebo) {
+        if (sim_mode == SIM_GAZEBO) {
             if (!gazebo_bridge::get_imu(&imu)) {
                 std::cerr << "WARNING: No IMU data from Gazebo" << std::endl;
+                platform_sleep_ms(4);
+                continue;
+            }
+        } else if (sim_mode == SIM_UDP) {
+            if (!udp_bridge::get_imu(&imu)) {
                 platform_sleep_ms(4);
                 continue;
             }
@@ -243,10 +300,16 @@ int main(int argc, char** argv) {
             }
         }
         
-        // Read barometer if using Gazebo
+        // Read barometer
         baro_sample_t baro;
         baro_sample_t* baro_ptr = nullptr;
-        if (use_gazebo && gazebo_bridge::get_baro(&baro)) {
+        if (sim_mode == SIM_GAZEBO && gazebo_bridge::get_baro(&baro)) {
+            baro_ptr = &baro;
+            // Debug: print first barometer reading
+            if (frame_count == 1) {
+                std::cout << "Barometer data received! Pressure: " << baro.pressure << " Pa" << std::endl;
+            }
+        } else if (sim_mode == SIM_UDP && udp_bridge::get_baro(&baro)) {
             baro_ptr = &baro;
             // Debug: print first barometer reading
             if (frame_count == 1) {
@@ -259,13 +322,42 @@ int main(int argc, char** argv) {
         float dt = (current_time - last_time) / 1000.0f;
         last_time = current_time;
         
-        // Run flight controller
+        // Run PID control
         motor_output_t motors;
+        
+        if (sim_mode != SIM_FAKE && baro_ptr) {
+            // Normal PID control mode
+            // NOTE: Skip flight mode system in auto-takeoff mode - we set altitude directly
+            if (!auto_takeoff && sim_mode != SIM_FAKE && baro_ptr) {
+                altitude_est_t alt;
+                fc_get_altitude(&alt);
+                flight_mode_update(alt.altitude, alt.velocity, dt);
+                
+                // Get altitude target from flight mode
+                float altitude_target = 0.0f;
+                float velocity_target = 0.0f;
+                if (flight_mode_get_altitude_target(&altitude_target) &&
+                    flight_mode_get_velocity_target(&velocity_target)) {
+                    
+                    altitude_setpoint_t alt_sp{};
+                    alt_sp.altitude_sp = altitude_target;
+                    alt_sp.velocity_sp = velocity_target;
+                    fc_set_altitude_setpoint(&alt_sp);
+                    fc_set_altitude_hold_enabled(true);
+                } else {
+                    fc_set_altitude_hold_enabled(false);
+                }
+            }
+        }
+        
+        // Run flight controller
         fc_step(&imu, baro_ptr, dt, &motors);
         
-        // Write motor outputs (to Gazebo or console)
-        if (use_gazebo) {
+        // Write motor outputs
+        if (sim_mode == SIM_GAZEBO) {
             gazebo_bridge::publish_motors(&motors);
+        } else if (sim_mode == SIM_UDP) {
+            udp_bridge::publish_motors(&motors);
         } else {
             platform_pwm_write(&motors);
         }
@@ -276,16 +368,21 @@ int main(int argc, char** argv) {
             attitude_t att;
             fc_get_attitude(&att);
             
-            if (use_gazebo && baro_ptr) {
+            // Get current flight mode
+            flight_mode_t mode = flight_mode_get();
+            const char* mode_name = flight_mode_get_name(mode);
+            
+            if (sim_mode != SIM_FAKE && baro_ptr) {
                 altitude_est_t alt;
                 fc_get_altitude(&alt);
-                printf("Alt: %.2fm Vel:%.2fm/s | Att: R=%.2f P=%.2f Y=%.2f | Motors: %.2f %.2f %.2f %.2f\n",
-                       alt.altitude, alt.velocity,
-                       att.roll * 57.3f, att.pitch * 57.3f, att.yaw * 57.3f,
-                       motors.motor[0], motors.motor[1], 
-                       motors.motor[2], motors.motor[3]);
+                
+                float error = 10.0f - alt.altitude;
+                printf("[ALT-HOLD] Target: 10.0m | Current: %.2fm | Error: %+.2fm | Vel: %+.2fm/s | Motors: %.2f\n",
+                       alt.altitude, error, alt.velocity,
+                       (motors.motor[0] + motors.motor[1] + motors.motor[2] + motors.motor[3]) / 4.0f);
             } else {
-                printf("Att: R=%.2f P=%.2f Y=%.2f | Motors: %.2f %.2f %.2f %.2f\n",
+                printf("[%s] Att: R=%.2f P=%.2f Y=%.2f | Motors: %.2f %.2f %.2f %.2f\n",
+                       mode_name,
                        att.roll * 57.3f, att.pitch * 57.3f, att.yaw * 57.3f,
                        motors.motor[0], motors.motor[1], 
                        motors.motor[2], motors.motor[3]);

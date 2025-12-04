@@ -21,7 +21,7 @@ static baro_sample_t g_latest_baro{};
 static bool g_baro_received = false;
 static std::mutex g_baro_mutex;
 
-// Publisher for motor commands (single Actuators message)
+// Publisher for motor commands (Actuators message for motor speed)
 static gz::transport::Node::Publisher g_motor_pub;
 
 /**
@@ -58,8 +58,8 @@ void baro_callback(const gz::msgs::FluidPressure &msg) {
 bool init() {
     std::cout << "[GAZEBO_BRIDGE] Initializing Gazebo transport..." << std::endl;
     
-    // Advertise single motor command topic for x500
-    std::string motor_topic = "/x500/command/motor_speed";
+    // Advertise motor speed command topic
+    std::string motor_topic = "/model/x500/command/motor_speed";
     
     g_motor_pub = g_node.Advertise<gz::msgs::Actuators>(motor_topic);
     if (!g_motor_pub) {
@@ -88,21 +88,33 @@ bool publish_motors(const motor_output_t* motors) {
         return false;
     }
     
-    // Create Actuators message for all 4 motors
-    gz::msgs::Actuators msg;
+    // Convert normalized thrust (0-1) to motor angular velocity (rad/s)
+    // Motor model equation: thrust = motor_constant * omega^2
+    // motor_constant = 8.54858e-06
+    // For hover (3.68N per motor): omega = sqrt(3.68 / 8.54858e-06) = 656 rad/s
+    // Max velocity = 1100 rad/s
+    const double MAX_MOTOR_SPEED = 1100.0;  // rad/s
     
-    // PX4 x500 motors expect angular velocity in rad/s
-    // Our FC outputs normalized thrust (0.0 to 1.0)
-    // Typical quadcopter motor max speed is ~900 rad/s (~8600 RPM)
-    const double MAX_MOTOR_SPEED = 900.0;
+    // Create actuators message
+    gz::msgs::Actuators actuators_msg;
     
     for (int i = 0; i < 4; i++) {
-        // Convert normalized thrust to motor velocity (rad/s)
-        double motor_velocity = motors->motor[i] * MAX_MOTOR_SPEED;
-        msg.add_velocity(motor_velocity);
+        // Convert normalized thrust to motor speed
+        // thrust = k * omega^2  =>  omega = sqrt(thrust / k)
+        // Normalize: thrust_normalized = motor[i] (0-1)
+        // Max thrust ~= k * max_speed^2
+        double motor_speed = motors->motor[i] * MAX_MOTOR_SPEED;
+        
+        // Add actuator command
+        actuators_msg.add_velocity(motor_speed);
     }
     
-    return g_motor_pub.Publish(msg);
+    // Publish motor speeds
+    if (!g_motor_pub.Publish(actuators_msg)) {
+        return false;
+    }
+    
+    return true;
 }
 
 bool get_imu(imu_sample_t* imu) {

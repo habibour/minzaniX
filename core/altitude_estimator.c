@@ -27,6 +27,7 @@ static float s_reference_pressure = SEA_LEVEL_PRESSURE;
 static float s_estimated_altitude = 0.0f;
 static float s_estimated_velocity = 0.0f;
 static float s_prev_baro_alt = 0.0f;
+static float s_velocity_filtered = 0.0f;  // Low-pass filtered velocity
 static bool s_initialized = false;
 
 // Calibration state
@@ -119,10 +120,14 @@ void altitude_estimator_update(
     if (dt > 0.001f) {  // Avoid division by zero
         baro_vel = (baro_alt - s_prev_baro_alt) / dt;
         // Clamp velocity to physically reasonable values
-        if (baro_vel > 5.0f) baro_vel = 5.0f;
-        if (baro_vel < -5.0f) baro_vel = -5.0f;
+        if (baro_vel > 10.0f) baro_vel = 10.0f;
+        if (baro_vel < -10.0f) baro_vel = -10.0f;
     }
     s_prev_baro_alt = baro_alt;
+    
+    // Low-pass filter velocity for smoother output (alpha=0.3 for smoothing)
+    const float velocity_alpha = 0.3f;
+    s_velocity_filtered = velocity_alpha * baro_vel + (1.0f - velocity_alpha) * s_velocity_filtered;
     
     // 3. Get vertical acceleration from IMU (compensate for gravity and attitude)
     // Transform body-frame Z acceleration to world frame
@@ -139,7 +144,7 @@ void altitude_estimator_update(
     // 5. Complementary filter: Fuse baro and accel
     // High-pass filter on accelerometer (fast response, but drifts)
     // Low-pass filter on barometer (slow but stable)
-    s_estimated_velocity = BARO_WEIGHT * baro_vel + ACCEL_WEIGHT * accel_velocity;
+    s_estimated_velocity = BARO_WEIGHT * s_velocity_filtered + ACCEL_WEIGHT * accel_velocity;
     s_estimated_altitude = BARO_WEIGHT * baro_alt + ACCEL_WEIGHT * (s_estimated_altitude + s_estimated_velocity * dt);
     
     // 6. Output
